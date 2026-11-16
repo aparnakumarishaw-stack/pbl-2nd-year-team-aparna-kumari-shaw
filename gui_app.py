@@ -251,9 +251,6 @@ class PixelLexiconApp:
         bg=self.bg_color,
     ).pack(side="right")
 
-    self.board_tiles = list(range(1, 16)) + [0]
-    self.shuffle_solvable_board()
-
     board_card = tk.Frame(
         self.container,
         bg=self.card_bg,
@@ -268,7 +265,10 @@ class PixelLexiconApp:
     self.grid_frame = tk.Frame(board_card, bg=self.card_bg)
     self.grid_frame.pack()
 
+    # Initialize grid structure first, then shuffle
+    self.board_tiles = list(range(1, 16)) + [0]
     self.create_pixel_grid()
+    self.shuffle_solvable_board()
 
     ctrl_frame_1 = tk.Frame(self.container, bg=self.bg_color)
     ctrl_frame_1.pack(pady=8)
@@ -389,10 +389,12 @@ class PixelLexiconApp:
       messagebox.showerror("Image Error", f"Failed to slice image: {str(e)}")
 
   def shuffle_solvable_board(self):
+    # Always start clean from the solved winning state
+    self.board_tiles = list(range(1, 16)) + [0]
     blank_idx = 15
     reverse_history = []
     
-    # 24 steps ensures random placement + instant reverse tracking
+    # 24 steps ensures random placement + precise reverse tracking
     for _ in range(24):
       r, c = divmod(blank_idx, 4)
       neighbors = []
@@ -529,17 +531,18 @@ class PixelLexiconApp:
 
     moves = []
     
-    # 1. Try fetching from C++ Engine binary
-    board_str = ",".join(map(str, self.board_tiles))
-    cpp_output = self.run_backend(["--solve-pixel", board_str])
-    if cpp_output and not cpp_output.startswith("ERROR"):
-      moves = [int(x) for x in cpp_output.split()] if cpp_output.strip() else []
-
-    # 2. Fallback to cached moves or Python PuzzleSolver algorithm
-    if not moves and self.auto_solve_cache:
+    # 1. Use cached shuffle moves if available (guarantees 100% perfect reassembly)
+    if self.auto_solve_cache:
       moves = self.auto_solve_cache
-    elif not moves:
-      moves = PuzzleSolver.solve(self.board_tiles)
+    else:
+      # 2. Fallback to C++ Engine or Python PuzzleSolver
+      board_str = ",".join(map(str, self.board_tiles))
+      cpp_output = self.run_backend(["--solve-pixel", board_str])
+      if cpp_output and not cpp_output.startswith("ERROR"):
+        moves = [int(x) for x in cpp_output.split()] if cpp_output.strip() else []
+      
+      if not moves:
+        moves = PuzzleSolver.solve(self.board_tiles)
 
     if moves:
       self.animate_auto_solve_steps(moves, 0)
@@ -561,9 +564,15 @@ class PixelLexiconApp:
           75, lambda: self.animate_auto_solve_steps(moves, step + 1)
       )
     else:
-      self.pixel_status_label.config(
-          text="✨ Auto-Solve Complete! ✨", fg="#4A7C59"
-      )
+      winning_board = list(range(1, 16)) + [0]
+      if self.board_tiles == winning_board:
+        self.pixel_status_label.config(
+            text="✨ Hurray! Puzzle Solved Perfectly! ✨", fg="#4A7C59"
+        )
+      else:
+        self.pixel_status_label.config(
+            text="✨ Auto-Solve Complete! ✨", fg="#4A7C59"
+        )
 
   # ==========================================
   # Lexicon Mode (Word Puzzle Engine)
