@@ -32,21 +32,26 @@ class PixelLexiconApp:
     self.cream_tile = "#FAF6F0"
     self.font_family = "Helvetica"
 
+    # State Variables
     self.loaded_image = None
-    self.image_tiles = {}
+    self.image_tiles = {}  # Map tile_id (1-15) -> ImageTk.PhotoImage
+    self.auto_solve_cache = []
 
+    # Backend Executable Binary Path
     self.backend_bin = "./pixel_lexicon_engine"
     if sys.platform.startswith("win"):
       self.backend_bin += ".exe"
 
     self.validator = WordValidator()
 
+    # Main Container
     self.container = tk.Frame(self.root, bg=self.bg_color)
     self.container.pack(fill="both", expand=True)
 
     self.show_home_screen()
 
   def run_backend(self, args):
+    """Executes the C++ backend binary with arguments and returns stdout."""
     if not os.path.exists(self.backend_bin):
       return self.simulate_backend(args)
     try:
@@ -64,6 +69,8 @@ class PixelLexiconApp:
     cmd = args[0]
     if cmd == "--verify-pixel":
       return "SOLVABLE"
+    elif cmd == "--solve-pixel":
+      return ""
     elif cmd == "--check-word":
       word = args[1].lower()
       return "VALID" if self._is_real_word(word) else "INVALID"
@@ -72,6 +79,7 @@ class PixelLexiconApp:
     return "ERROR"
 
   def animate_button_pulse(self, btn, original_bg, flash_color="#FFF3CD"):
+    """Creates a gentle cutesy color-flash animation on button click."""
     try:
       btn.config(bg=flash_color)
       self.root.after(
@@ -382,8 +390,10 @@ class PixelLexiconApp:
 
   def shuffle_solvable_board(self):
     blank_idx = 15
-    # Optimized to 35 random moves so A* solves it instantly every time
-    for _ in range(35):
+    reverse_history = []
+    
+    # 24 steps ensures random placement + instant reverse tracking
+    for _ in range(24):
       r, c = divmod(blank_idx, 4)
       neighbors = []
       if r > 0:
@@ -396,11 +406,15 @@ class PixelLexiconApp:
         neighbors.append(blank_idx + 1)
 
       target = random.choice(neighbors)
+      reverse_history.append(blank_idx)
+      
       self.board_tiles[blank_idx], self.board_tiles[target] = (
           self.board_tiles[target],
           self.board_tiles[blank_idx],
       )
       blank_idx = target
+
+    self.auto_solve_cache = reverse_history[::-1]
 
   def reset_pixel_board(self):
     self.shuffle_solvable_board()
@@ -476,6 +490,7 @@ class PixelLexiconApp:
           self.board_tiles[idx],
           self.board_tiles[blank_idx],
       )
+      self.auto_solve_cache = []  # Reset cache if manual moves are made
       self.update_pixel_grid()
 
       winning_board = list(range(1, 16)) + [0]
@@ -508,14 +523,26 @@ class PixelLexiconApp:
       return
 
     self.pixel_status_label.config(
-        text="🤖 Auto-Solving instantly via A* Heuristic...", fg="#7D6EC7"
+        text="🤖 Auto-Solving puzzle step-by-step...", fg="#7D6EC7"
     )
     self.root.update_idletasks()
 
-    solution_moves = PuzzleSolver.solve(self.board_tiles)
+    moves = []
+    
+    # 1. Try fetching from C++ Engine binary
+    board_str = ",".join(map(str, self.board_tiles))
+    cpp_output = self.run_backend(["--solve-pixel", board_str])
+    if cpp_output and not cpp_output.startswith("ERROR"):
+      moves = [int(x) for x in cpp_output.split()] if cpp_output.strip() else []
 
-    if solution_moves:
-      self.animate_auto_solve_steps(solution_moves, 0)
+    # 2. Fallback to cached moves or Python PuzzleSolver algorithm
+    if not moves and self.auto_solve_cache:
+      moves = self.auto_solve_cache
+    elif not moves:
+      moves = PuzzleSolver.solve(self.board_tiles)
+
+    if moves:
+      self.animate_auto_solve_steps(moves, 0)
     else:
       self.pixel_status_label.config(
           text="Could not find solution path instantly.", fg="#D9534F"
@@ -531,7 +558,7 @@ class PixelLexiconApp:
       )
       self.update_pixel_grid()
       self.root.after(
-          80, lambda: self.animate_auto_solve_steps(moves, step + 1)
+          75, lambda: self.animate_auto_solve_steps(moves, step + 1)
       )
     else:
       self.pixel_status_label.config(
@@ -833,4 +860,3 @@ if __name__ == "__main__":
   root = tk.Tk()
   app = PixelLexiconApp(root)
   root.mainloop()
-
